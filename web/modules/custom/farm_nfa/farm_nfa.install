@@ -575,3 +575,38 @@ function farm_nfa_update_9050(&$sandbox) {
     ['farm_nfa_plantation_forest']
   );
 }
+
+/**
+ * Update management tasks config.
+ */
+function farm_nfa_update_9051(&$sandbox) {
+  farm_nfa_update_helper(9051);
+}
+
+/**
+ * Installed the Typed Entity module.
+ */
+function farm_nfa_update_9052(&$sandbox) {
+  \Drupal::service('module_installer')->install(['typed_entity']);
+}
+
+/**
+ * Import FarmOS update config changes.
+ */
+function farm_nfa_update_9053(&$sandbox) {
+  farm_nfa_update_helper(9053);
+}
+
+/**
+ * Add Subactivity field formatter.
+ */
+function farm_nfa_update_9054(&$sandbox) {
+  farm_nfa_update_helper(9054);
+}
+
+/**
+ * Fix plan logs view.
+ */
+function farm_nfa_update_9055(&$sandbox) {
+  farm_nfa_update_helper(9055);
+}

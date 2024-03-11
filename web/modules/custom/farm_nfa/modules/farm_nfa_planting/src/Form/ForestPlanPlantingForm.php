@@ -4,6 +4,8 @@ namespace Drupal\farm_nfa_planting\Form;
 
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Render\Element;
+use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\Core\Routing\RouteProviderInterface;
 use Drupal\farm_location\AssetLocationInterface;
 use Drupal\farm_nfa\Form\ForestPlanBaseForm;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -31,8 +33,8 @@ class ForestPlanPlantingForm extends ForestPlanBaseForm {
    * @param \Drupal\farm_location\AssetLocationInterface $asset_location
    *   The asset location service.
    */
-  public function __construct(Request $request, AssetLocationInterface $asset_location) {
-    parent::__construct($request);
+  public function __construct(Request $request, RouteProviderInterface $route_provider, RouteMatchInterface $route_match, AssetLocationInterface $asset_location) {
+    parent::__construct($request, $route_provider, $route_match);
     $this->assetLocation = $asset_location;
   }
 
@@ -42,6 +44,8 @@ class ForestPlanPlantingForm extends ForestPlanBaseForm {
   public static function create(ContainerInterface $container) {
     return new static(
       $container->get('request_stack')->getCurrentRequest(),
+      $container->get('router.route_provider'),
+      $container->get('current_route_match'),
       $container->get('asset.location'),
     );
   }
