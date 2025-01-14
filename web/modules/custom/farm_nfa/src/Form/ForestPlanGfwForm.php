@@ -6,13 +6,9 @@ use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Drupal\Core\Routing\RouteMatchInterface;
-use Drupal\Core\Site\Settings;
+use Drupal\farm_nfa\Service\GfwApiService;
 use Drupal\key\KeyRepositoryInterface;
 use Symfony\Component\HttpFoundation\Request;
-use Drupal\Core\Config\ConfigFactoryInterface;
-use DateTime;
-use DateInterval;
-
 /**
  * Forest plan gfw form.
  *
@@ -42,11 +38,11 @@ class ForestPlanGfwForm extends FormBase {
   protected $keyRepository;
 
   /**
-   * The config factory.
-   * 
-   * @var \Drupal\Core\Config\ConfigFactoryInterface
+   * The GFW API service.
+   *
+   * @var \Drupal\farm_nfa\Api\GfwApiService
    */
-  protected $configFactory;
+  protected $gfwApiService;
 
   /**
    * Constructs a new ForestPlanGfwForm.
@@ -56,11 +52,11 @@ class ForestPlanGfwForm extends FormBase {
    * @param \Symfony\Component\HttpFoundation\Request $request
    *   The current request.
    */
-  public function __construct(RouteMatchInterface $routeMatch, Request $request, KeyRepositoryInterface $keyRepository, ConfigFactoryInterface $config_factory) {
+  public function __construct(RouteMatchInterface $routeMatch, Request $request, KeyRepositoryInterface $keyRepository, GfwApiService $gfw_api_service) {
     $this->routeMatch = $routeMatch;
     $this->request = $request;
     $this->keyRepository = $keyRepository;
-    $this->configFactory = $config_factory;
+    $this->gfwApiService = $gfw_api_service;
   }
 
   /**
@@ -71,7 +67,7 @@ class ForestPlanGfwForm extends FormBase {
       $container->get('current_route_match'),
       $container->get('request_stack')->getCurrentRequest(),
       $container->get('key.repository'),
-      $container->get('config.factory')
+      $container->get('farm_nfa.gfw_api_service')
     );
   }
 
@@ -101,7 +97,7 @@ class ForestPlanGfwForm extends FormBase {
     $gfw_api_password = $this->keyRepository->getKey('gfw_api_password');
     $gfw_api_user = $gfw_api_user ? $gfw_api_user->getKeyValue() : '';
     $gfw_api_password = $gfw_api_password ? $gfw_api_password->getKeyValue() : '';
-    $gfw_api_key = $this->generateGfwApiKey('https://data-api.globalforestwatch.org', ['username' => $gfw_api_user, 'password' => $gfw_api_password]);
+    $gfw_api_key = $this->gfwApiService->generateGfwApiKey('https://data-api.globalforestwatch.org', ['username' => $gfw_api_user, 'password' => $gfw_api_password]);
     $form['gfw_map'] = [
       '#type' => 'farm_map',
       '#map_type' => 'farm_nfa_plan_locations',
@@ -147,71 +143,6 @@ class ForestPlanGfwForm extends FormBase {
     ];
 
     return $form;
-  }
-  
-  /**
-   * Fetches data from the GFW API.
-   *
-   * @param string $endpoint
-   *   The API endpoint to call.
-   * @param array $options
-   *   An optional array of options to pass to the HTTP client.
-   *
-   * @return string|null
-   *   The API Key as a string, or NULL on failure.
-   */
-  private function generateGfwApiKey(string $endpoint, array $options = []) {
-    try {
-      $config = $this->configFactory->getEditable('system.site');
-      $client = \Drupal::httpClient();
-      $gfwApiKey = $config->get('farm_nfa.gfw_api_key') ?? NULL;
-      // Get the current date and time
-      $currentDate = new DateTime();
-      // Add 7 days using DateInterval
-      $currentDate->add(new DateInterval('P7D'));
-      $gfwApiKeyExpiryDate = $config->get('farm_nfa.gfw_api_key_expiry_date');
-      $gfwApiKeyExpiryDate = $gfwApiKeyExpiryDate ? new DateTime($gfwApiKeyExpiryDate) : new DateTime();
-      if (!empty($options['username']) && !empty($options['password']) && $gfwApiKeyExpiryDate < $currentDate) {
-        // Generate Auth Token
-        // Make the POST request with x-www-form-urlencoded data.
-        $response = $client->post($endpoint.'/auth/token', [
-          'form_params' => [
-            'username' => $options['username'],
-            'password' => $options['password'],
-          ],
-          'headers' => [
-            'Content-Type' => 'application/x-www-form-urlencoded',
-          ],
-        ]);
-        $response = json_decode($response->getBody(), TRUE);
-        $accessToken = $response['data']['access_token'];
-        // Generate a new API key as the current one is expired
-        $gfwApiKey = $client->post($endpoint.'/auth/apikey', [
-          'headers' => [
-            'Authorization' => 'Bearer ' . $accessToken,
-            'Content-Type' => 'application/json',
-          ],
-          'json' => [
-            'alias' => 'nfa-api-key-'. time(),
-            'organization' => 'nfa',
-            'email' => $options['username'],
-          ],
-        ]);
-        if ($gfwApiKey === NULL) {
-          $gfwApiKey = json_decode($gfwApiKey->getBody(), TRUE);
-        }
-        $expiryDate = $gfwApiKey['data']['expires_on'];
-        $gfwApiKey = $gfwApiKey['data']['api_key'];
-        $config->set('farm_nfa.gfw_api_key', $gfwApiKey)->save();
-        $config->set('farm_nfa.gfw_api_key_expiry_date', $expiryDate)->save();
-      }
-      return $gfwApiKey;
-    }
-    catch (\Exception $e) {
-      // Log the error and return NULL.
-      \Drupal::logger('farm_nfa')->error('GFW API call failed: @message', ['@message' => $e->getMessage()]);
-      return NULL;
-    }
   }
   
   /**
