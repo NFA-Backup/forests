@@ -63,7 +63,6 @@ class GfwApiService {
    */
   public function generateGfwApiKey(string $endpoint, array $options = []) {
     try {
-      error_log(print_r('testing 123', TRUE));
       $config = $this->configFactory->getEditable('system.site');
       $currentDate = new DateTime();
       $currentDate->add(new DateInterval('P7D'));
