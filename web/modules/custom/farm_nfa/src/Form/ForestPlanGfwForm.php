@@ -9,6 +9,7 @@ use Drupal\Core\Routing\RouteMatchInterface;
 use Drupal\Core\Site\Settings;
 use Drupal\key\KeyRepositoryInterface;
 use Symfony\Component\HttpFoundation\Request;
+use Drupal\Core\Config\ConfigFactoryInterface;
 use DateTime;
 use DateInterval;
 
@@ -41,6 +42,13 @@ class ForestPlanGfwForm extends FormBase {
   protected $keyRepository;
 
   /**
+   * The config factory.
+   * 
+   * @var \Drupal\Core\Config\ConfigFactoryInterface
+   */
+  protected $configFactory;
+
+  /**
    * Constructs a new ForestPlanGfwForm.
    *
    * @param \Drupal\Core\Routing\RouteMatchInterface $routeMatch
@@ -48,10 +56,11 @@ class ForestPlanGfwForm extends FormBase {
    * @param \Symfony\Component\HttpFoundation\Request $request
    *   The current request.
    */
-  public function __construct(RouteMatchInterface $routeMatch, Request $request, KeyRepositoryInterface $keyRepository) {
+  public function __construct(RouteMatchInterface $routeMatch, Request $request, KeyRepositoryInterface $keyRepository, ConfigFactoryInterface $config_factory) {
     $this->routeMatch = $routeMatch;
     $this->request = $request;
     $this->keyRepository = $keyRepository;
+    $this->configFactory = $config_factory;
   }
 
   /**
@@ -61,7 +70,8 @@ class ForestPlanGfwForm extends FormBase {
     return new static(
       $container->get('current_route_match'),
       $container->get('request_stack')->getCurrentRequest(),
-      $container->get('key.repository')
+      $container->get('key.repository'),
+      $container->get('config.factory')
     );
   }
 
@@ -152,65 +162,50 @@ class ForestPlanGfwForm extends FormBase {
    */
   private function generateGfwApiKey(string $endpoint, array $options = []) {
     try {
-      if (empty($options['username']) || empty($options['password'])) {
-        return NULL;
-      }
-      // Generate Auth Token
+      $config = $this->configFactory->getEditable('system.site');
       $client = \Drupal::httpClient();
-      $params = [
-        'username' => $options['username'],
-        'password' => $options['password'],
-        'grant_type' => 'password',
-      ];
-      // Make the POST request with x-www-form-urlencoded data.
-      $response = $client->post($endpoint.'/auth/token', [
-        'form_params' => $params,
-        'headers' => [
-          'Content-Type' => 'application/x-www-form-urlencoded',
-        ],
-      ]);
-      $response = json_decode($response->getBody(), TRUE);
-      $accessToken = $response['data']['access_token'];
-      $apiKeysResponse = $client->get($endpoint.'/auth/apikeys', [
-        'headers' => [
-          'Authorization' => 'Bearer ' . $accessToken,
-          'Content-Type' => 'application/json',
-        ],
-      ]);
-      $apiKeysResponse = json_decode($apiKeysResponse->getBody(), TRUE);
+      $gfwApiKey = $config->get('farm_nfa.gfw_api_key') ?? NULL;
       // Get the current date and time
       $currentDate = new DateTime();
       // Add 7 days using DateInterval
       $currentDate->add(new DateInterval('P7D'));
-      // Initialize the variable to store the valid API key
-      $apiKeysLength = count($apiKeysResponse['data']);
-      $validApiKey = NULL;
-
-      // Iterate over the array and break when the condition is met
-      foreach ($apiKeysResponse['data'] as $item) {
-        $expiryDate = new DateTime($item['expires_on']);
-        if (($expiryDate >= $currentDate) && ($item['organization'] == 'nfa')) {
-          $validApiKey = $item['api_key'];
-          break;
-        }
-      }
-      if ($validApiKey == NULL) {
+      $gfwApiKeyExpiryDate = $config->get('farm_nfa.gfw_api_key_expiry_date');
+      $gfwApiKeyExpiryDate = $gfwApiKeyExpiryDate ? new DateTime($gfwApiKeyExpiryDate) : new DateTime();
+      if (!empty($options['username']) && !empty($options['password']) && $gfwApiKeyExpiryDate < $currentDate) {
+        // Generate Auth Token
+        // Make the POST request with x-www-form-urlencoded data.
+        $response = $client->post($endpoint.'/auth/token', [
+          'form_params' => [
+            'username' => $options['username'],
+            'password' => $options['password'],
+          ],
+          'headers' => [
+            'Content-Type' => 'application/x-www-form-urlencoded',
+          ],
+        ]);
+        $response = json_decode($response->getBody(), TRUE);
+        $accessToken = $response['data']['access_token'];
         // Generate a new API key as the current one is expired
-        $queryParams = [
-          'alias' => 'nfa-api-key-'. $currentDate->format('Y-m-d'),
-          'organization' => 'nfa',
-          'email' => $options['username'],
-        ];
-        $client->post($endpoint.'/auth/apikey', [
+        $gfwApiKey = $client->post($endpoint.'/auth/apikey', [
           'headers' => [
             'Authorization' => 'Bearer ' . $accessToken,
             'Content-Type' => 'application/json',
           ],
-          'json' => $queryParams,
+          'json' => [
+            'alias' => 'nfa-api-key-'. time(),
+            'organization' => 'nfa',
+            'email' => $options['username'],
+          ],
         ]);
-        $validApiKey = $apiKeysResponse['data'][$apiKeysLength - 1]['api_key'];
+        if ($gfwApiKey === NULL) {
+          $gfwApiKey = json_decode($gfwApiKey->getBody(), TRUE);
+        }
+        $expiryDate = $gfwApiKey['data']['expires_on'];
+        $gfwApiKey = $gfwApiKey['data']['api_key'];
+        $config->set('farm_nfa.gfw_api_key', $gfwApiKey)->save();
+        $config->set('farm_nfa.gfw_api_key_expiry_date', $expiryDate)->save();
       }
-      return $validApiKey;
+      return $gfwApiKey;
     }
     catch (\Exception $e) {
       // Log the error and return NULL.
